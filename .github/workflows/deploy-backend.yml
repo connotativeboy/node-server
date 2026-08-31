@@ -30,8 +30,6 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
-          strict_host_key_checking: no
-          script_stop: true
           script: |
             rm -rf /var/www/backend/*
             mkdir -p /var/www/backend
@@ -52,8 +50,6 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
-          strict_host_key_checking: no
-          script_stop: true
           script: |
             cd /var/www/backend/backend
             # 安装生产依赖（国内服务器可加 --registry=https://registry.npmmirror.com）
