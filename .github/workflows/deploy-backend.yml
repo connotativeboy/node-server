@@ -1,0 +1,65 @@
+name: Deploy Backend
+
+on:
+  push:
+    tags:
+      - 'v*' # 匹配所有以 v 开头的tag，例如 v1.0.0、v1.1.0
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies (verify build)
+        run: |
+          cd backend
+          npm ci
+
+      - name: Clean server target dir
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
+          strict_host_key_checking: no
+          script_stop: true
+          script: |
+            rm -rf /var/www/backend/*
+            mkdir -p /var/www/backend
+
+      - name: Upload backend code to server
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
+          strict_host_key_checking: no
+          source: "./backend/"
+          target: "/var/www/backend/"
+
+      - name: Install deps and restart service
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
+          strict_host_key_checking: no
+          script_stop: true
+          script: |
+            cd /var/www/backend/backend
+            # 安装生产依赖（国内服务器可加 --registry=https://registry.npmmirror.com）
+            npm install --production
+            # 首次部署时全局安装 pm2
+            command -v pm2 >/dev/null 2>&1 || npm install -g pm2
+            # 若进程已存在则重启，否则首次启动
+            pm2 describe psych-assessment >/dev/null 2>&1 && pm2 restart psych-assessment || pm2 start index.js --name psych-assessment
+            pm2 save

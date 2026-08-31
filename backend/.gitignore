@@ -1,0 +1,14 @@
+# 依赖
+node_modules/
+
+# 数据库文件（运行时自动生成）
+*.db
+*.db-journal
+
+# 日志
+*.log
+npm-debug.log*
+
+# 系统文件
+.DS_Store
+Thumbs.db
