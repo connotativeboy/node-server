@@ -107,6 +107,7 @@ git push origin v1.0.0
 4. **上传代码**：将 `backend/` 目录 SCP 到 `/var/www/backend/`
 5. **安装依赖并重启**：
    - `npm install --production`（首次自动全局安装 pm2）
+   - `npm rebuild sqlite3 --build-from-source`（在服务器本地重新编译 sqlite3 原生模块，适配服务器 glibc 版本，避免 `GLIBC_2.38 not found` 报错）
    - `pm2 restart psych-assessment`（已存在则重启）或 `pm2 start index.js --name psych-assessment`（首次启动）
    - `pm2 save` 保存进程列表
 
@@ -205,6 +206,7 @@ nginx -s reload   # 重载配置
 ### 3. 踩坑提示
 - **sqlite3 版本与 Node 版本兼容**：本项目使用 `sqlite3@6.0.1`（支持较新的 Node.js，如 Node 24）。若使用旧版 `sqlite3@5.x` 在 Node 24 上安装，可能因缺少对应预编译二进制而触发本地编译，进而报错 `Could not find any Python installation`。**建议保持 `sqlite3@6.x`**。
 - **sqlite3 编译问题**：`sqlite3` 是原生模块，安装时可能需要编译。若 `npm install` 报错，可尝试安装 `node-gyp` 和 `windows-build-tools`，或使用预编译二进制（`npm install sqlite3 --build-from-source`）。国内网络建议使用镜像源：`npm install --registry=https://registry.npmmirror.com`。
+- **GLIBC 版本不匹配（部署 502）**：`sqlite3` 的预编译二进制要求较高版本的 glibc。若服务器 glibc 版本较低（如 Ubuntu 20.04 的 glibc 2.31），加载 `node_sqlite3.node` 会报 `GLIBC_2.38 not found`，导致服务启动失败、Nginx 返回 502。**解决方法**：在服务器上执行 `npm rebuild sqlite3 --build-from-source` 重新编译（需先安装 `build-essential` 和 `python3`）。CI/CD 工作流已内置该步骤。
 - **并发写锁**：sqlite3 对并发写入有限制，高并发场景可能出现 `SQLITE_BUSY`。本项目为最小 demo，若需高并发建议后续迁移到 MySQL/PostgreSQL。
 - **端口占用**：若 3000 端口被占用，启动会报 `EADDRINUSE`，可先释放端口或修改 `index.js` 中的 `PORT`。
 - **仅本机访问**：服务监听 `127.0.0.1`，外部无法直接访问，必须通过 Nginx 反向代理暴露，这是安全设计。

@@ -54,6 +54,10 @@ jobs:
             cd /var/www/backend/backend
             # 安装生产依赖（国内服务器可加 --registry=https://registry.npmmirror.com）
             npm install --production
+            # sqlite3 是原生模块，预编译二进制要求较高版本的 glibc，
+            # 必须在服务器本地重新编译以适配服务器的 glibc 版本，否则会报
+            # "GLIBC_2.38 not found" 导致服务启动失败（502）
+            npm rebuild sqlite3 --build-from-source
             # 首次部署时全局安装 pm2
             command -v pm2 >/dev/null 2>&1 || npm install -g pm2
             # 若进程已存在则重启，否则首次启动
