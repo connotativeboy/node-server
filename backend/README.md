@@ -8,13 +8,19 @@ Node.js + Express + sqlite3 实现的最小可用心理测评后端，**不包�
 
 ```
 backend/
-├─ index.js          # 入口服务：Express 实例、中间件、路由挂载、监听 127.0.0.1:3000
+├─ index.js            # 入口服务：Express 实例、中间件、路由挂载、监听 127.0.0.1:3000
+├─ engine/
+│  └─ scoring.js       # 统一结果引擎：score-band / profile-match（余弦匹配度）
+├─ config/
+│  └─ tests/           # 测试配置目录（每个 JSON = 一个测评，新增测试只加文件）
+│     └─ city-development.json
 ├─ db/
-│  ├─ db.js          # sqlite3 连接、自动建表（三张表 + auth_code 唯一索引）
-│  └─ initData.js    # 初始化测试测评数据（1套测评 + 5道题目带选项分值）
+│  ├─ db.js            # sqlite3 连接、自动建表 / 旧库字段迁移（4 张表）
+│  └─ initData.js      # 读取 config/tests/*.json 初始化测评、题目、结果库
 ├─ routes/
-│  ├─ assessment.js  # 测评相关接口（列表/详情/题目/开始测评）
-│  └─ answer.js      # 答卷、授权码接口（提交/查询）
+│  ├─ assessment.js    # 测评相关接口（列表/详情/题目/开始测评）
+│  ├─ answer.js        # 原生 auth_code 答卷接口（统一引擎 + 落库 + 回读）
+│  └─ frontend.js      # heart-test 前端接口（题库/授权码/提交/回读报告）
 ├─ package.json
 └─ README.md
 ```
@@ -27,10 +33,61 @@ backend/
 | GET | `/api/assessments/:id` | 获取单个测评详情 |
 | GET | `/api/assessments/:id/questions` | 获取该测评全部题目 |
 | POST | `/api/assessments/:id/start` | 开始测评：生成16位授权码，新建答卷 doing |
-| POST | `/api/answers/submit` | 提交答卷：计算总分，生成报告，状态改 finished |
+| POST | `/api/answers/submit` | 提交答卷：统一结果引擎计算并落库，状态改 finished |
 | GET | `/api/answers?auth_code=xxx` | 查询答卷：区分 doing/finished，不存在返回404 |
 
-## 三、本地运行步骤
+### heart-test 前端接口（`routes/frontend.js`）
+
+| 方法 | 路径 | 功能 |
+|------|------|------|
+| GET | `/api/tests` | 测评列表（仅 config 初始化出的测评） |
+| GET | `/api/test/:testId` | 测评介绍 |
+| GET | `/api/quiz/:testId` | 题目（options 含 `dims` / `score`） |
+| POST | `/api/verify-code` | 校验授权码（`TEST2024` / `MASTER`），返回 token |
+| GET | `/api/check-auth-status` | 校验授权状态 |
+| POST | `/api/submit-answer` | 提交答案：统一引擎计算 → 落库 → 返回 `data.match` |
+| GET | `/api/get-report/:testId` | 按 token 回读最近一次结果（含 `match`） |
+
+> `submit-answer` / `get-report` 使用 `Authorization: Bearer <token>`，服务端由 token+testId 派生稳定答卷标识，同一 token 重复提交同一测评会覆盖写入。
+
+## 三、配置驱动的测试（新增测试只加 JSON）
+
+`backend/config/tests/*.json` 每个文件就是一个测评，启动时自动初始化：
+
+```jsonc
+{
+  "test_id": "city-development",
+  "name": "你适合什么城市发展？",
+  "category": "性格",
+  "subtitle": "找到属于你的理想之城",
+  "desc": "测评介绍……",
+  "result_type": "profile-match",           // score-band | profile-match
+  "dimensions": ["自由", "自然", "节奏", "社交", "进取", "松弛"],
+  "questions": [
+    {
+      "content": "你理想的周末是怎么度过的？",
+      "options": [
+        { "value": "A", "label": "逛市集、看 live、吃宵夜", "dims": { "自由": 3, "社交": 3, "松弛": 1 } }
+      ]
+    }
+  ],
+  "results": [
+    {
+      "result_key": "chengdu",
+      "name": "成都",
+      "tagline": "巴适慢生活",
+      "profile": { "自由": 80, "自然": 70, "节奏": 40, "社交": 75, "进取": 30, "松弛": 90 },
+      "copy": "匹配后的专属文案……"
+    }
+  ]
+}
+```
+
+- `profile-match`：选项累加 `dims` → 用户维度向量 → 与每个 `results[].profile` 做余弦相似度 → 匹配度% + ranking。
+- `score-band`：选项累加 `score` → 按区间返回文本（引擎保留，当前无预置测试）。
+- 新增测试：只需新增一个 JSON，重启后端（空库时自动灌入）；若已有库且想重灌，删除 `psych.db` 再启动。
+
+## 四、本地运行步骤
 
 ```bash
 # 1. 进入 backend 目录
@@ -47,12 +104,12 @@ npm start
 ```
 数据库连接成功: ...\backend\psych.db
 数据库表初始化完成
-已创建测评: 心理健康自评量表 (id=1)
-已初始化题目数量: 5
+已初始化测评: 你适合什么城市发展？ (test_id=city-development, 8 题, profile-match, 结果库 6 项)
+配置初始化完成，共 1 个测评
 心理测评后端服务已启动: http://127.0.0.1:3000
 ```
 
-> 说明：首次启动会自动创建 `backend/psych.db` 数据库文件并初始化测试数据。若需重置数据，删除 `psych.db` 后重启即可。
+> 说明：首次启动自动创建 `backend/psych.db`，并从 `backend/config/tests/*.json` 灌入测评数据。若需重置数据，删除 `psych.db` 后重启即可。
 
 ### 快速测试
 
@@ -72,7 +129,7 @@ curl -X POST http://127.0.0.1:3000/api/answers/submit \
 curl "http://127.0.0.1:3000/api/answers?auth_code=你的授权码"
 ```
 
-## 四、CI/CD 自动部署（GitHub Actions）
+## 五、CI/CD 自动部署（GitHub Actions）
 
 与前端一致，后端也通过 GitHub Actions 自动部署。工作流文件位于 [`node-server/.github/workflows/deploy-backend.yml`](../.github/workflows/deploy-backend.yml)。
 
@@ -111,7 +168,7 @@ git push origin v1.0.0
    - `pm2 restart psych-assessment`（已存在则重启）或 `pm2 start index.js --name psych-assessment`（首次启动）
    - `pm2 save` 保存进程列表
 
-> 说明：`.gitignore` 排除了 `*.db`，数据库文件不会上传。首次启动时后端会自动创建 `psych.db` 并初始化 10 套测评数据。
+> 说明：`.gitignore` 排除了 `*.db`，数据库文件不会上传。首次启动时后端会自动创建 `psych.db`，并从 `config/tests/*.json` 初始化测评数据。
 
 ### 4. 首次部署前需在服务器手动准备
 
@@ -127,7 +184,7 @@ sudo chown -R $USER:$USER /var/www/backend
 # 3. 配置 Nginx 反向代理（见下一节）
 ```
 
-## 五、服务器部署（pm2 手动方式）
+## 六、服务器部署（pm2 手动方式）
 
 > 若不想用 CI/CD，也可手动部署，流程如下：
 
@@ -154,7 +211,7 @@ pm2 save                       # 保存进程列表（开机自启需配合 pm2 
 pm2 startup
 ```
 
-## 六、Nginx 反向代理配置
+## 七、Nginx 反向代理配置
 
 将 `/api/*` 转发到 `127.0.0.1:3000`：
 
@@ -188,7 +245,7 @@ nginx -t          # 检查配置语法
 nginx -s reload   # 重载配置
 ```
 
-## 七、重要业务注意事项
+## 八、重要业务注意事项
 
 ### 1. 授权码安全说明
 - **授权码由后端生成**：使用 Node.js `crypto.randomBytes` 生成 16 位随机码，前端禁止生成、禁止传入。
@@ -198,9 +255,9 @@ nginx -s reload   # 重载配置
 
 ### 2. 数据存储说明
 - **文件型数据库**：数据保存在 `backend/psych.db` 单文件中，无需 MySQL，项目内直接运行。
-- **JSON 字段**：`questions.options` 和 `user_answers.answer_data` 以 JSON 字符串存储，读写时需 `JSON.stringify` / `JSON.parse`。
-- **自动建表**：服务启动时自动创建三张表（表不存在则创建），无需手动建表。
-- **自动初始化**：`assessments` 表为空时自动插入测试测评数据，已有数据则跳过，避免重复初始化。
+- **JSON 字段**：`questions.options`（含 `dims`/`score`）、`assessment_results.profile`、`user_answers.answer_data/result_json` 均以 JSON 字符串存储，读写时需 `JSON.stringify` / `JSON.parse`。
+- **自动建表**：服务启动时自动创建 4 张表（`assessments` / `questions` / `user_answers` / `assessment_results`），并对旧库自动补齐 `result_type`、`dimensions`、`result_json` 字段。
+- **自动初始化**：`assessments` 表为空时，从 `config/tests/*.json` 灌入；已有数据则跳过，避免重复初始化。
 - **备份**：直接备份 `psych.db` 文件即可完成数据备份。
 
 ### 3. 踩坑提示

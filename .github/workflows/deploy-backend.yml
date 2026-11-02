@@ -24,15 +24,21 @@ jobs:
           cd backend
           npm ci
 
-      - name: Clean server target dir
+      - name: Clean server target dir (keep psych.db)
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
           script: |
-            rm -rf /var/www/backend/*
-            mkdir -p /var/www/backend
+            # 确保目标目录存在，避免 cd 失败后在错误目录执行 find
+            mkdir -p /var/www/backend || exit 1
+            cd /var/www/backend || exit 1
+            # 删除除数据库文件外的所有内容，保留线上 psych.db（答卷与授权码数据）
+            # 同时保留 SQLite 的 journal / WAL / SHM 附属文件，避免数据损坏
+            find . -type f ! -name '*.db' ! -name '*.db-journal' ! -name '*.db-wal' ! -name '*.db-shm' -delete
+            find . -mindepth 1 -type d -empty -delete
+            mkdir -p backend
 
       - name: Upload backend code to server
         uses: appleboy/scp-action@master

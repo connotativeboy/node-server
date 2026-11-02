@@ -47,9 +47,9 @@ app.use((err, req, res, next) => {
 const HOST = '127.0.0.1';
 const PORT = 3000;
 
-// 启动流程：建表 -> 初始化数据 -> 监听端口
-initTables();
-initData()
+// 启动流程：建表（含旧库迁移） -> 从 config 初始化数据 -> 监听端口
+initTables()
+  .then(() => initData())
   .then(() => {
     app.listen(PORT, HOST, () => {
       console.log(`心理测评后端服务已启动: http://${HOST}:${PORT}`);
