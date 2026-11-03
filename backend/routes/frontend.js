@@ -69,10 +69,14 @@ function buildReportContent(result) {
 }
 
 // 1. GET /api/tests 获取全部测评列表
-// 返回 [{ testId, category, name, description, subtitle }]
+// 返回 [{ testId, category, name, description, subtitle, status, question_count, dimensions, duration, featured }]
 router.get('/tests', (req, res) => {
   all(
-    'SELECT test_id, name, category, subtitle, desc FROM assessments WHERE status = 1 ORDER BY id',
+    `SELECT test_id, name, category, subtitle, desc, status, question_count,
+            dimensions, duration, featured
+       FROM assessments
+      WHERE status = 1
+      ORDER BY featured DESC, id ASC`,
     []
   )
     .then((rows) => {
@@ -82,6 +86,11 @@ router.get('/tests', (req, res) => {
         name: r.name,
         description: r.desc,
         subtitle: r.subtitle,
+        status: r.status === 1 ? 'live' : 'soon',
+        question_count: r.question_count || 0,
+        dimensions: parseJson(r.dimensions, []),
+        duration: r.duration || '',
+        featured: Boolean(r.featured),
       }));
       res.json({ success: true, data });
     })

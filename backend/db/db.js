@@ -79,7 +79,9 @@ async function initTables() {
       question_count INTEGER DEFAULT 0,
       status         INTEGER DEFAULT 1,
       result_type    TEXT DEFAULT 'score-band',
-      dimensions     TEXT
+      dimensions     TEXT,
+      featured       INTEGER DEFAULT 0,
+      duration       TEXT
     )
   `);
 
@@ -134,6 +136,8 @@ async function initTables() {
   // 旧库增量迁移（新库建表时已含这些列，直接跳过）
   await addColumnIfMissing('assessments', 'result_type', "TEXT DEFAULT 'score-band'");
   await addColumnIfMissing('assessments', 'dimensions', 'TEXT');
+  await addColumnIfMissing('assessments', 'featured', 'INTEGER DEFAULT 0');
+  await addColumnIfMissing('assessments', 'duration', 'TEXT');
   await addColumnIfMissing('user_answers', 'result_type', 'TEXT');
   await addColumnIfMissing('user_answers', 'result_json', 'TEXT');
 

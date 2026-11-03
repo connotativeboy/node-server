@@ -4,11 +4,11 @@
  * 纯配置驱动：
  * - 只读取 backend/config/tests/*.json，每个文件 = 一个测评
  * - 文件内包含测评信息、独立题库（选项可带 score 或 dims）、结果库（profile-match）
- * - assessments 表已有数据时跳过，避免重复初始化
+ * - 启动时同步配置：新测试自动插入；已有测试只更新元信息，不动题库/结果/答卷
  */
 const fs = require('fs');
 const path = require('path');
-const { run, all } = require('./db');
+const { run, get, all } = require('./db');
 
 const CONFIG_DIR = path.join(__dirname, '..', 'config', 'tests');
 
@@ -59,6 +59,13 @@ function validateConfig(cfg, file) {
     throw new Error(`result_type 不合法（应为 score-band / profile-match）: ${file}`);
   }
 
+  cfg.status = cfg.status || 'live';
+  if (!['live', 'soon'].includes(cfg.status)) {
+    throw new Error(`status 不合法（应为 live / soon）: ${file}`);
+  }
+  cfg.featured = Boolean(cfg.featured);
+  cfg.duration = cfg.duration || '';
+
   cfg.questions.forEach((q, qi) => {
     if (!q || !q.content) {
       throw new Error(`第 ${qi + 1} 题缺少 content: ${file}`);
@@ -99,17 +106,53 @@ function validateConfig(cfg, file) {
 }
 
 /**
- * 插入单个测评：assessments -> questions -> assessment_results
+ * 同步单个测评：
+ * - 不存在则插入 assessments + questions + assessment_results
+ * - 已存在则只更新元信息（status/featured/dimensions/duration 等），不覆盖题库与结果，避免破坏已有答卷
  */
 async function insertTest(cfg) {
   const name = cfg.name || cfg.title || cfg.test_id;
   const title = cfg.title || name;
   const dimensions = JSON.stringify(cfg.dimensions || []);
+  const status = cfg.status === 'soon' ? 0 : 1;
+  const featured = cfg.featured ? 1 : 0;
+  const duration = cfg.duration || '';
+
+  const existing = await get('SELECT id FROM assessments WHERE test_id = ?', [cfg.test_id]);
+
+  if (existing) {
+    await run(
+      `UPDATE assessments
+          SET title = ?, name = ?, category = ?, subtitle = ?, desc = ?,
+              question_count = ?, status = ?, result_type = ?, dimensions = ?,
+              featured = ?, duration = ?
+        WHERE test_id = ?`,
+      [
+        title,
+        name,
+        cfg.category || '其他',
+        cfg.subtitle || '',
+        cfg.desc || '',
+        cfg.questions.length,
+        status,
+        cfg.result_type,
+        dimensions,
+        featured,
+        duration,
+        cfg.test_id,
+      ]
+    );
+    console.log(
+      `已同步测评配置: ${name} (test_id=${cfg.test_id}, ${cfg.questions.length} 题, ${cfg.status})`
+    );
+    return;
+  }
 
   const inserted = await run(
     `INSERT INTO assessments
-       (test_id, title, name, category, subtitle, desc, question_count, status, result_type, dimensions)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (test_id, title, name, category, subtitle, desc, question_count, status,
+        result_type, dimensions, featured, duration)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       cfg.test_id,
       title,
@@ -118,9 +161,11 @@ async function insertTest(cfg) {
       cfg.subtitle || '',
       cfg.desc || '',
       cfg.questions.length,
-      1,
+      status,
       cfg.result_type,
       dimensions,
+      featured,
+      duration,
     ]
   );
 
@@ -163,21 +208,15 @@ async function insertTest(cfg) {
 }
 
 /**
- * 初始化入口：assessments 为空时，从 config 目录灌入
+ * 初始化 / 同步入口：
+ * - 每次启动都读取 config，新测试自动插入，已有测试同步元信息
+ * - 最后确保同一时刻只有一个 featured=true
  */
 async function initData() {
-  const rows = await all('SELECT test_id FROM assessments');
-
-  if (rows.length > 0) {
-    const ids = rows.map((r) => r.test_id).join(', ');
-    console.log(`已存在 ${rows.length} 个测评（${ids}），跳过初始化`);
-    console.log('如需重新灌入配置，请停止服务后删除 psych.db 再启动');
-    return;
-  }
-
   const configs = readConfigs();
+
   if (configs.length === 0) {
-    console.warn('config/tests 目录下没有可用的 JSON 配置，未初始化任何测评');
+    console.warn('config/tests 目录下没有可用的 JSON 配置，未同步任何测评');
     return;
   }
 
@@ -185,7 +224,19 @@ async function initData() {
     await insertTest(cfg);
   }
 
-  console.log(`配置初始化完成，共 ${configs.length} 个测评`);
+  // 配置是 featured 的唯一来源：先全部清零，再设置当前主推
+  await run('UPDATE assessments SET featured = 0');
+  const featured = configs.find((cfg) => cfg.featured && cfg.status !== 'soon');
+  if (featured) {
+    await run('UPDATE assessments SET featured = 1 WHERE test_id = ?', [featured.test_id]);
+  }
+
+  const rows = await all('SELECT test_id, status, featured FROM assessments ORDER BY id');
+  const featuredIds = rows.filter((r) => r.featured === 1).map((r) => r.test_id);
+  console.log(
+    `配置同步完成：配置 ${configs.length} 个，库内 ${rows.length} 个测评` +
+      (featuredIds.length ? `，主推 ${featuredIds.join(', ')}` : '，无主推')
+  );
 }
 
 module.exports = { initData, readConfigs };

@@ -40,7 +40,7 @@ backend/
 
 | 方法 | 路径 | 功能 |
 |------|------|------|
-| GET | `/api/tests` | 测评列表（仅 config 初始化出的测评） |
+| GET | `/api/tests` | 测评列表（含 status / question_count / dimensions / duration / featured 等 8 字段） |
 | GET | `/api/test/:testId` | 测评介绍 |
 | GET | `/api/quiz/:testId` | 题目（options 含 `dims` / `score`） |
 | POST | `/api/verify-code` | 校验授权码（`TEST2024` / `MASTER`），返回 token |
@@ -62,6 +62,9 @@ backend/
   "subtitle": "找到属于你的理想之城",
   "desc": "测评介绍……",
   "result_type": "profile-match",           // score-band | profile-match
+  "status": "live",                         // live | soon
+  "featured": true,                         // 首页主推；同一时刻只应有一个 true
+  "duration": "约 2 分钟",                   // 列表卡片展示时长
   "dimensions": ["自由", "自然", "节奏", "社交", "进取", "松弛"],
   "questions": [
     {
@@ -85,7 +88,7 @@ backend/
 
 - `profile-match`：选项累加 `dims` → 用户维度向量 → 与每个 `results[].profile` 做余弦相似度 → 匹配度% + ranking。
 - `score-band`：选项累加 `score` → 按区间返回文本（引擎保留，当前无预置测试）。
-- 新增测试：只需新增一个 JSON，重启后端（空库时自动灌入）；若已有库且想重灌，删除 `psych.db` 再启动。
+- 新增测试：新增 JSON 后重启后端即自动插入（不会覆盖已有题库、结果库与答卷）；已有测试只同步元信息。
 
 ## 四、本地运行步骤
 
@@ -104,12 +107,12 @@ npm start
 ```
 数据库连接成功: ...\backend\psych.db
 数据库表初始化完成
-已初始化测评: 你适合什么城市发展？ (test_id=city-development, 8 题, profile-match, 结果库 6 项)
-配置初始化完成，共 1 个测评
+已同步测评配置: 你适合什么城市发展？ (test_id=city-development, 8 题, live)
+配置同步完成：配置 1 个，库内 1 个测评，主推 city-development
 心理测评后端服务已启动: http://127.0.0.1:3000
 ```
 
-> 说明：首次启动自动创建 `backend/psych.db`，并从 `backend/config/tests/*.json` 灌入测评数据。若需重置数据，删除 `psych.db` 后重启即可。
+> 说明：首次启动自动创建 `backend/psych.db`；以后每次启动会同步 `config/tests/*.json` 的元信息（新增测试自动插入，不覆盖已有题库/结果/答卷）。删除 `psych.db` 会重置全部测评数据。
 
 ### 快速测试
 
@@ -160,7 +163,7 @@ git push origin v1.0.0
 
 1. **Checkout** 拉取代码
 2. **Setup Node.js 20** + 安装依赖（本地校验构建）
-3. **清理服务器目录**：`rm -rf /var/www/backend/*`
+3. **清理服务器目录**：删除 `/var/www/backend` 下除 `*.db` / `*.db-journal` / `*.db-wal` / `*.db-shm` 外的文件，保留线上 `psych.db`（答卷与授权码数据）
 4. **上传代码**：将 `backend/` 目录 SCP 到 `/var/www/backend/`
 5. **安装依赖并重启**：
    - `npm install --production`（首次自动全局安装 pm2）
@@ -168,7 +171,7 @@ git push origin v1.0.0
    - `pm2 restart psych-assessment`（已存在则重启）或 `pm2 start index.js --name psych-assessment`（首次启动）
    - `pm2 save` 保存进程列表
 
-> 说明：`.gitignore` 排除了 `*.db`，数据库文件不会上传。首次启动时后端会自动创建 `psych.db`，并从 `config/tests/*.json` 初始化测评数据。
+> 说明：`.gitignore` 排除了 `*.db`，数据库文件不会上传；清理步骤也会保留服务器上的 `psych.db`。启动时同步 `config/tests/*.json`，新增测试自动插入。
 
 ### 4. 首次部署前需在服务器手动准备
 
@@ -256,8 +259,8 @@ nginx -s reload   # 重载配置
 ### 2. 数据存储说明
 - **文件型数据库**：数据保存在 `backend/psych.db` 单文件中，无需 MySQL，项目内直接运行。
 - **JSON 字段**：`questions.options`（含 `dims`/`score`）、`assessment_results.profile`、`user_answers.answer_data/result_json` 均以 JSON 字符串存储，读写时需 `JSON.stringify` / `JSON.parse`。
-- **自动建表**：服务启动时自动创建 4 张表（`assessments` / `questions` / `user_answers` / `assessment_results`），并对旧库自动补齐 `result_type`、`dimensions`、`result_json` 字段。
-- **自动初始化**：`assessments` 表为空时，从 `config/tests/*.json` 灌入；已有数据则跳过，避免重复初始化。
+- **自动建表**：服务启动时自动创建 4 张表（`assessments` / `questions` / `user_answers` / `assessment_results`），并对旧库自动补齐 `result_type`、`dimensions`、`featured`、`duration`、`result_json` 字段。
+- **自动同步**：每次启动读取 `config/tests/*.json`；新测试自动插入，已有测试只更新元信息，不覆盖题库/结果/答卷；`featured` 只保留一个。
 - **备份**：直接备份 `psych.db` 文件即可完成数据备份。
 
 ### 3. 踩坑提示
